@@ -1,0 +1,11 @@
+.RData
+.Rhistory
+data
+graphs
+rawdata
+ECIS_Project.Rproj
+*.xls
+*.sqlite
+*.csv
+*.pdf
+.Rproj.user
