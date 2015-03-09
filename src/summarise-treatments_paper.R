@@ -3,7 +3,7 @@ library(magrittr)
 library(plyr)
 library(dplyr)
 
-function(){# create timeBin variable for calcultion of hourly means and plotting
+function(){# create timeBin variable for calculation of hourly means and plotting
 rba$timeBin <- rba %>% 
   use_series(Time) %>% 
   cut(., unique(floor(.)), labels = FALSE, include.lowest = TRUE)
