@@ -4,30 +4,38 @@ library(plyr);library(dplyr)
 library(ggplot2)
 library(ggthemes)
 
-db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
+Param <- "Z"
+Freq <- 16000
 
-pre <- dbGetQuery(db, 'SELECT *
-                  FROM Data
-                  INNER JOIN Treatment
-                  using(Date,Well)
-                  WHERE Mark = "Seed" OR Mark = "Starv" OR Mark = "Preinc" AND celldensity = 5000')
+db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
+sqlcmd <- paste('SELECT * FROM Data
+                  INNER JOIN Treatment using(Date,Well)
+                  WHERE Mark IN ("Seed","Starv","Preinc") AND 
+                  celldensity = 5000 AND
+                  Param = "',Param,'" AND
+                  Freq = "',Freq,'"',sep="")
+pre <- dbGetQuery(db, sqlcmd)
 dbDisconnect(db)
 
 # calculate hourly means
-ecispre <- pre %>% 
+ecispre <- pre %>% # calculate timeBins
   mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
   filter(!is.na(timeBin)) %>% 
-  group_by(Date) %>%
-  mutate(timeBin=timeBin-max(timeBin)) %>%
-  filter(timeBin>=-40) %>%
-  group_by(Date, Well, Param, Freq) %>% 
-  mutate(value = value/last(value)) %>%
-  group_by(Date, Well, Param, Freq, timeBin) %>% 
-  mutate(value=median(value)) %>% 
-  group_by(Freq,Param,timeBin) %>%
+  group_by(Date) %>% # adjust timeseries
+  mutate(timeBin=timeBin-max(timeBin)) %>%  
+  filter(timeBin>=-40) %>% 
+  group_by(Date,Well,Param,Freq) %>% # normalise values by dividing with last value
+  mutate(value = value/last(value)) %>% 
+#   group_by(Date, Well, Param, Freq, timeBin) %>% # calculate hourly means
+#   summarise(value=mean(value)) %>%
+  group_by(Date,Param,Freq,timeBin) %>% # calculate experiment means
+  summarise(value=mean(value)) %>%
+  group_by(Param,Freq,timeBin) %>% # calculate summary from experiment means
   summarise(Mean=mean(value),
-            SD=sd(value)) 
-rm(pre)
+            SD=sd(value),
+            N=length(value),
+            SE=SD/sqrt(N))
+
 # Data for angiogenesis article figure panel A ----
 write.csv(ecispre,"data/ecis_preinc_data.csv") # data for article figure 
 
@@ -56,16 +64,23 @@ write.csv(ecispre,"data/ecis_preinc_data.csv") # data for article figure
 #             xmax=max(timeBin))
 
 # Figure panel A ----
-ecispre %>%
-  filter(Freq=="16000"&Param=="Z") %>%
-  ggplot(aes(x=timeBin,y=Mean)) + 
-  geom_line() +
-  geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),size=0.2,alpha=0.75) +
-  geom_vline(xintercept = c(-17.5,-1), linetype = "longdash") +
-  ylab(bquote(list(Normalised~resistance, R/R[0]~(8000~Hz)))) +
-  xlab("Time before release (h)") +
-  annotate("text",x=c(-29,-10),y=c(2.25,2.25),label=c("20% FBS","1% FBS")) +
-  annotate("text",x=0,y=2,label=c("preincubation"),angle=90)
+Fig3A <- ecispre %>% {
+  Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
+  Par <- use_series(.,"Param") %>% unique %>% as.character
+  parameter <- switch(Par,Z="impedance",
+                      R="resistance",
+                      C="capacitance")
+  p <- ggplot(.,aes(x=timeBin,y=Mean)) + 
+    geom_line(size=1) +
+    geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),size=0.2,alpha=0.75) +
+    geom_vline(xintercept = c(-17.5,-1), linetype = "longdash") +
+    ylab(bquote(list(Normalised~.(parameter), .(Par)/.(Par)[0]~(.(Fq)~Hz)))) +
+    xlab("Time before release (h)") +
+    annotate("text",x=c(-29,-10),y=c(2.25,2.25),label=c("20% FBS","1% FBS")) +
+    annotate("text",x=0,y=2,label=c("preincubation"),angle=90)
+  p}
+
+  
 
 # Facets for supplementary info Figure panel A
 # ecispre %>%
@@ -101,18 +116,16 @@ ecispre %>%
 #   geom_line() +
 #   geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),size=0.2,alpha=0.25) +
 #   facet_grid(Param~Freq, scale="free_y")
-rm(pre)
+
 
 db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
-
-imp <- dbGetQuery(db, 'SELECT *
-                  FROM Data
-                  INNER JOIN Treatment
-                  using(Date,Well)
-                  WHERE Mark = "Release" AND 
+sqlcmd <- paste('SELECT * FROM Data 
+                  INNER JOIN Treatment using(Date,Well) 
+                  WHERE Mark = "Release" AND  
                   celldensity = 5000 AND 
-                  Param = "Z" AND
-                  Freq = "16000"')
+                  Param = "',Param,'" AND
+                  Freq = "',Freq,'"',sep="")
+imp <- dbGetQuery(db, sqlcmd)
 dbDisconnect(db)
 
 # Helper function ----
@@ -153,7 +166,7 @@ imp %<>% ungroup %>%
 
 # dosestreatment should be binned for each growth factor: but only for summary
 imp %<>% 
-  filter(dosestreatment==0|dosestreatment>100) %>% # throw out small doses with no effect
+  filter(dosestreatment==0|dosestreatment>1000) %>% # throw out small doses with no effect
   filter(!Date=="20131213") %>% # 1. experiment and we had different treatment doses
   mutate(dosestreatment=ceiling(dosestreatment)) # round up to integers
 
@@ -161,38 +174,78 @@ imp %<>%
 # calculate hourly means
 # split dataframe by date, growthfactor and parameter and then 
 # simplify multilevel list structure
-imp.pairs <-imp %>% 
+
+imp.pairs <- imp %>% 
   mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
   filter(!is.na(timeBin)) %>% 
   group_by(Date,Well) %>% 
   mutate(value = value/value[1]) %>%
-  group_by(Date,Well,timeBin,Freq,Param,GF,concGF,dosestreatment,treatment) %>% 
+  group_by(Date,timeBin,Freq,Param,GF,concGF,dosestreatment,treatment) %>% 
   summarise(value=mean(value)) %>%
+  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
+  mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
+  group_by(Freq,Param,GF,concGF,dosestreatment,treat2,timeBin) %>% 
+  summarise(Mean=mean(value),
+            SD=sd(value),
+            N=length(value),
+            SE=SD/sqrt(N)) %>%
   dlply(.(GF)) %>% lapply(Pairs) %>% 
   lapply(function(x) if (class(x) == "data.frame") list(x) else x)  %>% 
-  unlist(recursive=FALSE)
+  unlist(recursive=FALSE) 
 
-Myplot <- function(mydf) mydf %>% 
-  group_by(Freq,Param,dosestreatment,treatment,timeBin) %>%
-  summarise(Mean=mean(value),
-            SD=sd(value)) %>% {
-              Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
-              Par <- use_series(.,"Param") %>% unique %>% as.character
-              parameter <- switch(Par,Z="impedance",
-                                  R="resistance",
-                                  C="capacitance")
-              p <- ggplot(.,aes(x=timeBin,y=Mean,color=treatment)) + 
-                geom_line(size=1) +
-                geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),alpha=0.1) +
-                facet_grid(~dosestreatment) +
-                scale_color_colorblind() +
-                ylab(bquote(list(Normalised~.(parameter), .(Par)/.(Par)[0]~(.(Fq)~Hz)))) +
-                xlab("Time after release (h)")
-              p
-            }
+Myplot <- function(mydf) mydf %>% {
+  Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
+  Par <- use_series(.,"Param") %>% unique %>% as.character
+  parameter <- switch(Par,Z="impedance",
+                      R="resistance",
+                      C="capacitance")
+  p <- ggplot(.,aes(x=timeBin,y=Mean,color=treat2)) + 
+    geom_line(size=1) +
+    geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),alpha=0.25) +
+    facet_grid(~dosestreatment) +
+    scale_color_colorblind() +
+    ylab(bquote(list(Normalised~.(parameter), .(Par)/.(Par)[0]~(.(Fq)~Hz)))) +
+    xlab("Time after release (h)")
+  p
+}
 
-
-imp.pairs %>% 
+plotlist <- imp.pairs %>% 
   lapply(Myplot)
+plotlist[[5]] 
+Fig3A
 
+imp.pairs.smooth <- imp %>% 
+  mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
+  filter(!is.na(timeBin)) %>% 
+  group_by(Date,Well) %>% 
+  mutate(value = value/value[1]) %>%
+  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
+  mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
+  group_by(Date,timeBin,Freq,Param,GF,concGF,dosestreatment,treat2) %>% 
+  summarise(Mean=mean(value),
+            SD=sd(value),
+            N=length(value),
+            SE=SD/sqrt(N)) %>%
+  dlply(.(GF)) %>% lapply(Pairs) %>% 
+  lapply(function(x) if (class(x) == "data.frame") list(x) else x)  %>% 
+  unlist(recursive=FALSE) 
 
+Myplot.smooth <- function(mydf) mydf %>% {
+  Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
+  Par <- use_series(.,"Param") %>% unique %>% as.character
+  parameter <- switch(Par,Z="impedance",
+                      R="resistance",
+                      C="capacitance")
+  p <- ggplot(.,aes(x=timeBin,y=Mean,color=treat2)) + 
+    stat_summary(fun.data=mean_cl_boot,geom = "errorbar", width = 0.2) +
+    stat_summary(fun.y=mean, geom = "line", size = 1) +
+    facet_grid(~dosestreatment) +
+    scale_color_colorblind() +
+    ylab(bquote(list(Normalised~.(parameter), .(Par)/.(Par)[0]~(.(Fq)~Hz)))) +
+    xlab("Time after release (h)")
+  p
+}
+
+plotlist.smooth <- imp.pairs.smooth %>% 
+  lapply(Myplot.smooth)
+plotlist.smooth[[5]] 
