@@ -26,6 +26,7 @@ treatA,treatA,treatA,treatB,treatB,treatB,treatC,treatC,treatC,treatD,treatD,tre
 treatA,treatA,treatA,treatB,treatB,treatB,treatC,treatC,treatC,treatD,treatD,treatD
 
 /rawdata/ECIS_140419_Metadata_doses_treatment.csv
+
 0,0,0,0,0,0,0,0,0,0,0,0
 126,126,126,126,126,126,126,126,126,126,126,126
 400,400,400,400,400,400,400,400,400,400,400,400
