@@ -9,11 +9,14 @@ All experiment data was exported from ECIS Software to xls file using export to 
 src/Import-to-DB.R script.
 
 
-Data file name examples:
+- Data file name examples:
+
 /rawdata/ECIS_131123_MFT_1.xls 
+
 /rawdata/ECIS_140419_MFT_1.xls
 
-Metadata file name examples (each metadata layer has its own file with shape of a 96 well plate):
+- Metadata file name examples (each metadata layer has its own file with shape of a 96 well plate):
+
 /rawdata/ECIS_140419_Metadata_treatment.csv
 
 treatA,treatA,treatA,treatB,treatB,treatB,treatC,treatC,treatC,treatD,treatD,treatD
