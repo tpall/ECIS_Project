@@ -288,11 +288,7 @@ Fig3
 #                       R="resistance",
 #                       C="capacitance")
 #   p <- ggplot(.,aes(x=timeBin,y=Mean,color=treat2)) + 
-<<<<<<< HEAD
 #     stat_summary(fun.data=mean_sdl,mult=1,geom = "smooth") +
-=======
-#     stat_summary(fun.data=mean_cl_boot, B=1000, geom = "errorbar", width = 0.2,alpha=0.25) +
->>>>>>> 298ba16b2f7e97d07b6bdfc574aad88767a74bf7
 #     stat_summary(fun.y=mean, geom = "line", size = 1) +
 #     facet_grid(~dosestreatment) +
 #     scale_color_manual(values=c("#E69F00","#000000","#0072B2")) +
