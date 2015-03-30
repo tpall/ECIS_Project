@@ -19,6 +19,9 @@ sqlcmd <- paste('SELECT * FROM Data
 imp <- dbGetQuery(db, sqlcmd)
 dbDisconnect(db)
 
+# Lets save data to 
+save(imp,file = "~/Dropbox//CD44_angiogenesis_paper/data/ecis_imp.R")
+
 # Helper function ----
 # function to convert factors to numerics
 make.numeric <- . %>% as.character %>% as.numeric
@@ -218,3 +221,87 @@ Fig3 <- arrangeGrob(arrangeGrob(labels[[1]], Fig3A+ggtitle(""), heights = c(1,12
                                 ncol = 2, widths = c(2,8))
 Fig3
 
+# #################################################################################
+# # Lets have a look at the differences ----
+# GF <- "VEGF"
+# db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
+# sqlcmd <- paste('SELECT * FROM Data 
+#                 INNER JOIN Treatment using(Date,Well) 
+#                 WHERE Mark = "Release" AND  
+#                 celldensity = 5000 AND
+#                 GF = "',GF,'" AND
+#                 concGF IN (0,25)', sep="")
+# parms <- dbGetQuery(db, sqlcmd)
+# dbDisconnect(db)
+# 
+# # remove columns containing only single value/no variation
+# parms %<>% 
+#   Filter({. %>% unique %>% length %>% is_greater_than(.,1)}, .)
+# 
+# # reset Times so that they all start from zero and filter data under 72 hours
+# parms %<>% 
+#   group_by(Date) %>% 
+#   mutate(Time = Time-first(Time)) %>%  
+#   filter(Time<=73)
+# 
+# parms %<>% ungroup %>%
+#   mutate(concGF=concGF%>%make.numeric,
+#          dosestreatment=dosestreatment%>%make.numeric,
+#          Date=Date%>%as.factor,
+#          Well=Well%>%as.factor,
+#          Freq=Freq%>%as.factor,
+#          Param=Param%>%as.factor,
+#          GF=GF%>%as.factor,
+#          treatment=treatment%>%as.factor)
+# 
+# # dosestreatment should be binned for each growth factor: but only for summary
+# parms %<>% 
+#   filter(dosestreatment==0|dosestreatment>1000) %>% # throw out small doses with no effect
+#   filter(!Date=="20131213") %>% # 1. experiment and we had different treatment doses
+#   mutate(dosestreatment=ceiling(dosestreatment)) # round up to integers
+# 
+# laglist <- parms %>%
+#   mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
+#   filter(!is.na(timeBin)) %>% 
+#   group_by(Freq,Well,Param,Date) %>% 
+#   mutate(value = value/last(value),
+#          change = value-lag(value,k=-1)) %>%
+#   filter(!is.na(change)) %>%
+#   group_by(Freq,Param,Date,concGF,dosestreatment,treatment,timeBin) %>% 
+#   summarise(change=mean(change)) %>% 
+#   group_by(Freq,Param,concGF,dosestreatment,treatment,timeBin) %>% 
+#   summarise(Mean=mean(change),
+#             SD=sd(change)) %>% 
+#   ungroup %>%
+#   mutate(treatment=ifelse(dosestreatment>0,as.character(treatment),"untreated")) %>%
+#   inset(,"treat2",paste0(.$concGF," ng/ml VEGF\n+",.$treatment)) %>% # create summary variable treat2
+#   mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
+#   dlply(.(Param))
+# 
+# laglist %>% names
+# 
+# laglist[["R"]] %>% { 
+#   orig <- (.) # next line is to reorder legend keys
+#   orig$treat2 <- factor(orig$treat2, c("0 ng/ml VEGF\n+untreated","25 ng/ml VEGF\n+untreated",
+#                                        "25 ng/ml VEGF\n+hIgG-Fc","25 ng/ml VEGF\n+3MUT-Fc"))
+#   orig
+# } %>%
+#   ggplot(aes(x=timeBin,y=Mean,color=treat2)) +
+#   geom_line(size=1) +
+#   geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),size=0.2) +
+#   facet_grid(Freq~dosestreatment, scale="free_y") +
+#   scale_color_colorblind()
+# 
+# 
+# 
+# laglist[["Z"]] %>% { 
+#   orig <- (.) # next line is to reorder legend keys
+#   orig$treat2 <- factor(orig$treat2, c("0 ng/ml VEGF\n+untreated","25 ng/ml VEGF\n+untreated",
+#                                        "25 ng/ml VEGF\n+hIgG-Fc","25 ng/ml VEGF\n+3MUT-Fc"))
+#   orig
+# } %>%
+#   filter(timeBin<48) %>%
+#   ggplot(aes(x=treat2,y=Mean,fill=treat2)) +
+#   geom_boxplot() +
+#   facet_grid(Freq~dosestreatment, scale="free_y") +
+#   scale_fill_colorblind()
