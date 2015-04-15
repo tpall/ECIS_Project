@@ -167,6 +167,9 @@ sqlcmd <- paste('SELECT * FROM Data
 pre <- dbGetQuery(db, sqlcmd)
 dbDisconnect(db)
 
+# Lets save data to 
+save(pre,file = "~/Dropbox//CD44_angiogenesis_paper/data/ecis_pre.R")
+
 # calculate hourly means
 ecispre <- pre %>% # calculate timeBins
   mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
