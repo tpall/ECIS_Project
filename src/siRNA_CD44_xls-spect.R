@@ -1,9 +1,23 @@
+library(RSQLite)
+library(magrittr)
+library(plyr);library(dplyr)
 library(ggplot2)
 library(ggthemes)
-library(magrittr)
 
-sirna %>% filter(GF%in%c("VEGF","FBS_5")) %>% 
-  ddply(., .(Date,Well,Param,Hz), mutate, value=value-value[1]) %>%
+db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
+dbListTables(db)
+sqlcmd <- paste('SELECT * FROM Data 
+                  INNER JOIN siRNA using(Date,Well) 
+                  WHERE Mark = "Release" AND  
+                  celldensity = 5000',sep="")
+sirna <- dbGetQuery(db, sqlcmd)
+dbDisconnect(db)
+
+sirna %>% summary
+
+sirna %>% 
+  filter(GF%in%c("VEGF","FBS_5")) %>% 
+  ddply(., .(Date,Well,Param,Freq), mutate, value=value-value[1]) %>%
   dlply(.,"Param", Myplot) %>% 
 {x; lapply(x, function(y) {
   pam <- regmatches(y$labels$y, regexpr("^.",y$labels$y))
@@ -13,7 +27,7 @@ sirna %>% filter(GF%in%c("VEGF","FBS_5")) %>%
 
 
 plotfunx <- . %>% 
-  ddply(., .(Date,Well,Param,Hz), mutate, value=value/value[1]) %>%
+  ddply(., .(Date,Well,Param,Freq), mutate, value=value/value[1]) %>%
   dlply(.,"Param", function(x) {
     ggplot(x, aes(x=timeBin,y=value,color=factor(Hz))) + 
       facet_grid(treatment~doses.GF) +
