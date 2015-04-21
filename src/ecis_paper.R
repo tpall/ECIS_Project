@@ -131,6 +131,7 @@ Myplot <- function(mydf) mydf %>% {
 #   ggtitle(bquote(list(Treatment~conc.,paste(mu,mol)/L))) +
 #   theme(plot.title = element_text(size=10)) +
 #   ylab(NULL)
+lapply(imp.pairs,summary)
 
 # lets select only VEGF 25 data for plotting
 Fig3B <- imp.pairs[[5]] %>% { 
