@@ -1,25 +1,38 @@
-# Check if we already have Bigdata in environment
-if(!"Bigdata" %in% unlist(list(ls()))){
-  source("src/importxls.R")
-}
+library(RSQLite)
+library(magrittr)
+library(plyr);library(dplyr)
+library(ggplot2)
+library(ggthemes)
 
-head(Bigdata)
-summary(Bigdata)
+db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
+# dbListTables(db)
+sqlcmd <- paste('SELECT * FROM Data 
+                INNER JOIN siRNA using(Date,Well) 
+                WHERE Mark = "Release" AND  
+                celldensity = 5000',sep="")
+sirna <- dbGetQuery(db, sqlcmd)
+dbDisconnect(db)
 
-sirna <- Bigdata %>% filter(Ind==1) %>%
+# reset time and create time bins
+sirna %<>% 
   group_by(Date) %>%
-  mutate(Time=Time-min(Time)) %>% 
-  mutate(timeBin=cut(Time, 
-                     breaks = unique(floor(Time)),
-                     labels = FALSE,
-                     include.lowest=TRUE)) %>%
+  mutate(Time = Time-Time[1]) %>% 
+  mutate(timeBin = cut(Time, 
+                       breaks = unique(floor(Time)),
+                       labels = FALSE,
+                       include.lowest=TRUE)) %>%
   (function(x) x[complete.cases(x),]) %>% {
     finito <- ddply(.,"timeBin", summarise, N = unique(Date) %>% length) %>%
       filter(N>1) %>% max
     .[.$timeBin<=finito,]
-  }  
-  
-sirna$doses.GF <- as.numeric(as.character(sirna$doses.GF))
+  }
+
+sirna %>% summary
+
+sirna$concGF <- as.numeric(as.character(sirna$concGF))
+sirna$celldensity <- as.factor(sirna$celldensity)
+sirna$GF <- as.factor(sirna$GF)
+sirna$treatment <- as.factor(sirna$treatment)
 
 # plot stuff -----
 library(Hmisc)
@@ -35,13 +48,14 @@ ylabeller <- function(x){
 
 Myplot<-function(x) {
   ggplot(x, aes(timeBin, value, color=treatment)) + 
-    facet_grid(Hz~doses.GF, scales="free") +
-    stat_summary(fun.data=mean_se, geom="pointrange") +
+    facet_grid(Freq~concGF, scales="free") +
+    stat_summary(fun.data = mean_se, geom="errorbar",width=0.25) +
+    stat_summary(fun.y = mean, geom="line") +
     scale_color_colorblind(breaks=c("UT","SCR","siCD44","siVIM")) +
     ylab(ylabeller(unique(x$Param))) + xlab("Time (h)")
 }
 
-# VEGF data ----
+# Raw VEGF data ----
 plist <- sirna %>% filter(GF%in%c("VEGF","FBS_5")) %>% 
   dlply(.,"Param", Myplot)
 lapply(plist, function(x) 
@@ -51,13 +65,13 @@ lapply(plist, function(x)
                    ".pdf"), plot = x))
 # norm data ---
 sirna %>% filter(GF%in%c("VEGF","FBS_5")) %>% 
-  ddply(., .(Date,Well,Param,Hz), mutate, value=value-value[1]) %>%
+  ddply(., .(Date,Well,Param,Freq), mutate, value=value-head(value,3)) %>%
   dlply(.,"Param", Myplot) %>% 
-{x; lapply(x, function(y) {
-  pam <- regmatches(y$labels$y, regexpr("^.",y$labels$y))
-  ggsave(paste0("graphs/siRNA_VEGF_",pam,"_norm_", Sys.Date(),".pdf"), plot = y)
-})
-}
+  lapply({.%>%(function(x) {
+    pam <- regmatches(x$labels$y, regexpr("^.",x$labels$y))
+    ggsave(paste0("graphs/siRNA_VEGF_",pam,"_norm_", Sys.Date(),".pdf"),plot=x,width=5,height=7)}
+    )})
+
 
 # bFGF data ----
 plist <- sirna %>% filter(GF%in%c("bFGF","FBS_5")) %>% 
@@ -70,13 +84,12 @@ lapply(plist, function(x)
 
 # norm data ----
 sirna %>% filter(GF%in%c("bFGF","FBS_5")) %>% 
-  ddply(., .(Date,Well,Param,Hz), mutate, value=value-value[1]) %>%
+  ddply(., .(Date,Well,Param,Freq), mutate, value=value-head(value,3)) %>%
   dlply(.,"Param", Myplot) %>% 
-{x; lapply(x, function(y) {
-  pam <- regmatches(y$labels$y, regexpr("^.",y$labels$y))
-  ggsave(paste0("graphs/siRNA_bFGF_",pam,"_norm_", Sys.Date(),".pdf"), plot = y)
-})
-}
+  lapply({.%>%(function(x) {
+    pam <- regmatches(x$labels$y, regexpr("^.",x$labels$y))
+    ggsave(paste0("graphs/siRNA_FGF2_",pam,"_norm_", Sys.Date(),".pdf"), plot = x,width=5,height=7)}
+  )})
 
 # FBS data ----
 plist <- sirna %>% filter(GF%in%c("FBS_20","FBS_5")) %>% 
@@ -90,11 +103,9 @@ lapply(plist, function(x)
 
 # norm data ----
 sirna %>% filter(GF%in%c("FBS_20","FBS_5")) %>% 
-  ddply(., .(Date,Well,Param,Hz), mutate, value=value-value[1]) %>%
+  ddply(., .(Date,Well,Param,Freq), mutate, value=value-head(value,3)) %>%
   dlply(.,"Param", Myplot) %>% 
-  lapply(., function(p) p + facet_grid(Hz~GF, scales="free")) %>%
-{x; lapply(x, function(y) {
-  pam <- regmatches(y$labels$y, regexpr("^.",y$labels$y))
-  ggsave(paste0("graphs/siRNA_FBS_",pam,"_norm_", Sys.Date(),".pdf"), plot = y)
-})
-}
+  lapply({.%>%(function(x) {
+    pam <- regmatches(x$labels$y, regexpr("^.",x$labels$y))
+    ggsave(paste0("graphs/siRNA_FBS_",pam,"_norm_", Sys.Date(),".pdf"), plot = x,width=3,height=7)}
+  )})
