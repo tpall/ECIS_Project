@@ -91,7 +91,7 @@ rba.pairs <- rba %>%
   unlist(recursive=FALSE)
 
 
-# Plotting compartement ----
+# Plotting compartment ----
 library(ggplot2)
 library(ggthemes)
 library(Hmisc)
