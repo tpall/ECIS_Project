@@ -7,7 +7,7 @@ library(ggthemes)
 Param <- "Z"
 Freq <- 16000
 
-# Fig 3B VEGF 25 ng/ml data ----
+# Fig 3B ----
 
 db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite") # open connection
 sqlcmd <- paste('SELECT * FROM Data 
@@ -224,7 +224,6 @@ Fig3 <- arrangeGrob(arrangeGrob(labels[[1]], Fig3A+ggtitle(""), heights = c(1,12
                                 arrangeGrob(labels[[2]], Fig3B, heights = c(1,12)),
                                 ncol = 2, widths = c(2,8))
 Fig3
-
 # #################################################################################
 # # Lets have a look at the differences ----
 # GF <- "VEGF"
