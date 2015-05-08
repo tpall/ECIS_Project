@@ -79,34 +79,38 @@ rba.pairs %>% lapply({.%>%droplevels%>%summary})
 rb.sum %>% lapply(summary)
 rb.sum %>% lapply(.%>%select(dosestreatment)%>%unique)
 
-
-rb.sum[[2]] %>% summary
-
-rb.sum[[4]] %>% 
-  ggplot(aes(x=RMSE)) +
-  geom_histogram() +
-  facet_wrap(~Date)
-
-rb.sum[[4]] %>% 
-  ggplot(aes(x=Drift)) +
-  geom_histogram() +
-  facet_wrap(~Date)
+library(gridExtra)
+rb.sum %>% 
+  lapply({.%>%qplot(RMSE,data=., geom="histogram", fill=treatment)}) %>%
+  do.call(grid.arrange,.)
+rb.sum %>% 
+  lapply({.%>%qplot(Drift,data=., geom="histogram", fill=treatment)}) %>%
+  do.call(grid.arrange,.)  
 
 rb.sum %>% names
-rb.sum[[2]] %>% 
-  filter(!Date=="20131213") %>%
-  filter(Time<=100) %>%
+  
+Rb.plot <- .%>% {
+  filter(.,!Date=="20131213") %>%
+  filter(Time<=72) %>%
   group_by(Well,Date) %>%
   mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
   filter(!is.na(timeBin)) %>% 
   group_by(Param,Date,dosestreatment,treatment,timeBin,GF,concGF) %>% 
-  summarise(value=median(value)) %>% 
+  summarise(value=mean(value)) %>% 
   ungroup %>%
   mutate(treatment=ifelse(dosestreatment>0,as.character(treatment),"untreated")) %>%
-  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% # create summary variable treat2
+  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
   mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
   ggplot(.,aes(x=timeBin,y=value,color=treat2)) + 
   stat_summary(fun.data=mean_se,geom="errorbar",width=0.25,alpha=0.25) +
   stat_summary(fun.y=mean,geom="line") +
   facet_grid(Param~dosestreatment,scales = "free_y") +
-  scale_color_colorblind()
+  scale_color_colorblind() +
+  ggtitle(bquote(list(Treatment~conc.,ng/ml))) +
+  ylab(bquote(Parameter~value)) +
+  xlab(bquote(list(Time,hours))) +
+  theme(legend.title=element_blank())}
+
+rb.sum[-1] %>% 
+  lapply(Rb.plot) %>%
+  do.call(grid.arrange,.)
