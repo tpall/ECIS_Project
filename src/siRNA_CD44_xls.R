@@ -27,12 +27,13 @@ sirna %<>%
     .[.$timeBin<=finito,]
   }
 
-sirna %>% summary
+sirna %<>% 
+  mutate(concGF <- as.numeric(as.character(concGF)),
+         celldensity <- as.factor(celldensity),
+         GF <- as.factor(GF),
+         treatment <- as.factor(treatment))
+  
 
-sirna$concGF <- as.numeric(as.character(sirna$concGF))
-sirna$celldensity <- as.factor(sirna$celldensity)
-sirna$GF <- as.factor(sirna$GF)
-sirna$treatment <- as.factor(sirna$treatment)
 
 # plot stuff -----
 library(Hmisc)
