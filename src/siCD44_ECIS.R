@@ -43,6 +43,10 @@ ylabeller <- function(x){
   out
 } 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 9448df4ce2392791799449025fb668e1a233d3b9
 Myplot<-function(x) {
   ggplot(x, aes(timeBin, value, color=treatment)) + 
     facet_grid(Freq~concGF, scales="free") +
