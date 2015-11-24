@@ -2,160 +2,121 @@
 
 # load libraries
 library(RSQLite)
+library(tidyr) # spread
 library(magrittr)
 library(plyr);library(dplyr)
+library(reshape2)
 library(ggplot2)
 library(ggthemes)
 
 # rm(list=ls())
 
 # Specify parameters presented
-Param <- "Z"
-Freq <- 16000
+Parameter <- "Z"
+Freq.subset <- "16000"
 
-# Fig 3B VEGF 25 ng/ml data ----
-# Lets load data 
-load("data/ecis_imp.R")
+# Connect to database
+db <- src_sqlite("data/ECIS2.sqlite", create = FALSE)
+# src_tbls(db) # list tables in database
 
-# Helper function ----
-# function to convert factors to numerics
-make.numeric <- . %>% as.character %>% as.numeric
+# Extract 3MUT-Fc/SB101-Fc experiments
+dates <- tbl(db, "Metadata") %>% filter(value=="SB101-Fc") %>% select(Date) %>% 
+  distinct() %>% collect() %>% as.data.frame() %>% .[,"Date"]
 
+# Get release marks & filter out 1. experiment @"20131213" dates[-1] bc low treatment doses
+marks <- tbl(db, "Marks") %>% filter(Date %in% dates[-1]) %>%
+  collect() %>% rename(Mark = Time) %>% group_by(Date) %>%
+  summarise(Mark = max(Mark))
+
+# Mean preincubation time 
+Preinc <- tbl(db, "Marks") %>% filter(Date %in% dates[-1]) %>%
+  collect() %>% rename(Mark = Time) %>% group_by(Date) %>%
+  summarise(Preinc = Mark[3]-Mark[2],
+            Starv = Mark[3]-Mark[1]) %>% 
+  ungroup %>% summarise(Preinc = mean(Preinc),
+                        Starv = mean(Starv)) %>% melt
+
+# Split metadata column
+wide.metadata <- tbl(db, "Metadata") %>% filter(Date %in% dates[-1]) %>% 
+  collect() %>% spread(Metadata, value) %>% 
+  mutate(doses_treatment = ceiling(as.numeric(doses_treatment))) %>%
+  filter(doses_treatment == 0|doses_treatment > 1000)
+
+# Download data and merge with metadata
+imp <- tbl(db, "Data") %>% 
+  filter(Param == Parameter, Freq == Freq.subset, Date %in% dates[-1]) %>%
+  collect %>% 
+  left_join(., wide.metadata) %>% 
+  left_join(., marks) %>% rename(Time = `Time (hrs)`) %>% 
+  mutate(Time = Time-Mark) %>% 
+  group_by(Date) %>%
+  mutate(timeBin = cut(Time, 
+                       breaks = unique(floor(Time)),
+                       labels = unique(floor(Time))[-1],
+                       include.lowest=TRUE)) %>%
+  ungroup() %>% filter(complete.cases(.)) %>% 
+  mutate(conc_GF = as.numeric(as.character(conc_GF)),
+         Freq = as.numeric(as.character(Freq)),
+         timeBin = as.numeric(as.character(timeBin)))
+
+# split dataframe by date, growthfactor and parameter and then 
+# simplify multilevel list structure
 # function to split experiments by different uninduced-induced pairs. Pairs is function importante!!!!
 Pairs <- . %>% {
-  fargs <- use_series(., concGF) %>%
+  fargs <- use_series(., conc_GF) %>%
     unique %>%
     (function(x) if(length(x) == 1) data.frame(ind = x) else 
       expand.grid(ctrl = x[1], ind = x[-1])) %>% 
-    (function(x) split(x,f=x$ind))
-  lapply(fargs, function(x) filter(.,concGF%in%x))
+    (function(x) split(x, f = x$ind))
+  lapply(fargs, function(x) filter(., conc_GF %in% x))
 }
 
-# Impedance etc data ----
-
-# reset Times so that they all start from zero and filter data under 72 hours
-imp %<>% 
-  group_by(Date) %>% 
-  mutate(Time = Time-Time[1]) %>%  
-  filter(Time<=73)
-
-# convert cols to numeric and factors
-imp %<>% 
-  ungroup %>%
-  mutate(concGF=concGF%>%make.numeric,
-         dosestreatment=dosestreatment%>%make.numeric,
-         Date=Date%>%as.factor,
-         Well=Well%>%as.factor,
-         Freq=Freq%>%as.factor,
-         Param=Param%>%as.factor,
-         GF=GF%>%as.factor,
-         treatment=treatment%>%as.factor)
-
-# dosestreatment should be binned for each growth factor: but only for summary
-imp %<>% 
-  filter(dosestreatment==0|dosestreatment>1000) %>% # throw out small doses with no effect
-  filter(!Date=="20131213") %>% # 1. experiment and we had different treatment doses
-  mutate(dosestreatment=ceiling(dosestreatment)) # round up to integers
-
-# calculate hourly means ----
-# split dataframe by date, growthfactor and parameter and then 
-# simplify multilevel list structure
 imp.pairs <- imp %>% 
-  group_by(Well,Date) %>% # group and normalise to first 3 values each well in each experiment
-  mutate(value = value/(value%>%head(n=3)%>%mean)) %>%
-#   group_by(Date,dosestreatment,GF) %>% # min-max normalise 
-#   mutate(value = (value-min(value))/(max(value)-min(value))) %>%
-  mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>% # calculate hourly means and 
-  filter(!is.na(timeBin)) %>% 
-  group_by(Freq,Param,Date,concGF,dosestreatment,GF,treatment,timeBin) %>% # summarise each experiment
-  summarise(value=mean(value)) %>%
+  group_by(Date, Well) %>% mutate(value = value/mean(value[timeBin==0], na.rm = T)) %>%
+  group_by(Date, conc_GF, doses_treatment, GF, treatment, timeBin) %>% # summarise each experiment
+  summarise(value = mean(value, na.rm = T)) %>%
   ungroup %>%
-  mutate(treatment=ifelse(dosestreatment>0,as.character(treatment),"untreated")) %>%
-  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% # create summary variable treat2
-  mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
+  mutate(treatment = ifelse(doses_treatment > 0, as.character(treatment), "untreated"),
+         doses_treatment = round(doses_treatment/1000, digits = 2),
+         treat2 = paste0(conc_GF," ng/ml ", GF, "\n+", treatment), # create summary variable treat2
+         treat2 = gsub("SB101", "3MUT", treat2),
+         treat2 = gsub("hIgG", "rhIgG", treat2)) %>% 
   dlply(.(GF)) %>% lapply(Pairs) %>% # split data into treated untreated pairs
   lapply(function(x) if (class(x) == "data.frame") list(x) else x)  %>% 
-  unlist(recursive=FALSE) %>% # filter out controls from other experiments
-  lapply({.%>% {datestouse <- filter(.,dosestreatment>0)%>%
-                  use_series(Date)%>%
-                  unique%>%
-                  droplevels
-                filter(.,Date%in%datestouse)}}) %>% # summarise data
-  lapply({.%>%group_by(Freq,Param,concGF,dosestreatment,GF,timeBin,treat2) %>% # summarise experiments
-            summarise(Mean=mean(value),
-                      SD=sd(value),
-                      N=length(value),
-                      SE=SD/sqrt(N))}) 
+  unlist(recursive = FALSE) %>% 
+  lapply({.%>% {datestouse <- filter(., doses_treatment > 0) %>%
+    use_series(Date) %>% unique
+  filter(., Date %in% datestouse)}})
 
-Myplot <- function(mydf) mydf %>% {
-  Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
-  Par <- use_series(.,"Param") %>% unique %>% as.character
-  parameter <- switch(Par,Z="impedance",
-                      R="resistance",
-                      C="capacitance")
-  p <- (.) %>% ungroup %>%
-    mutate(dosestreatment=round(dosestreatment/1000,digits = 2)) %>%
-    ggplot(.,aes(x=timeBin,y=Mean,color=treat2)) + 
-    geom_line(size=1) + # aes(linetype=treat2),
-    geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),color="black",alpha=0.25) +
-    facet_grid(~dosestreatment) +
-    scale_color_manual(values=colorblind_pal()(8)) + # c("#E69F00","#009E73","#D55E00","#000000")
-    guides(color=guide_legend(ncol=4)) +
-    ylab(bquote(list(Normalised~.(parameter), 
-                     .(Par)/.(Par)[0]~(.(Fq)~Hz)))) + # for two rows, use atop instead of list
-    xlab("Time after release, h")
-  p
-}
+Myplot <- function(x, myaes) {
+  parameter <- switch(Parameter, Z = "impedance",
+                      R = "resistance",
+                      C = "capacitance")
+  ggplot(x, myaes) + 
+    facet_grid(~ doses_treatment) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", alpha = myalpha) +
+    stat_summary(fun.y = mean, geom = "line") +
+    scale_color_manual(values = colorblind_pal()(8)) + # c("#E69F00","#009E73","#D55E00","#000000")
+    guides(color = guide_legend(ncol = 4)) +
+    xlab(bquote(list(Time~after~release,h)))}
 
 # lets select only VEGF 25 data for plotting
-Fig3B <- imp.pairs[[5]] %>% { 
-  orig <- (.) # next line is to reorder legend keys
-  orig$treat2 <- factor(orig$treat2, levels = c("0 ng/ml VEGF\n+untreated","25 ng/ml VEGF\n+untreated",
-                                                "25 ng/ml VEGF\n+hIgG-Fc","25 ng/ml VEGF\n+3MUT-Fc"),
-                        labels = c("0 ng/ml VEGF\n+untreated","25 ng/ml VEGF\n+untreated",
-                                   "25 ng/ml VEGF\n+rhIgG-Fc","25 ng/ml VEGF\n+3MUT-Fc"))
-  orig
-} %>%
-  Myplot %>% {(.) + 
-      ggtitle(bquote(list(Recombinant~protein~concentration,paste(mu,mol)/L))) +
-      theme(plot.title = element_text(size=8)) +
-      ylab(NULL) + 
-      labs(color=NULL) +
-      theme(strip.background = element_rect(colour="white", fill="grey80")) + 
-      theme(legend.justification=c(1,0), legend.position=c(1,0),
-            legend.background = element_rect(fill=NA))}
+Fig3B <- imp.pairs[[5]] %>% filter(timeBin >= 0) %>% Myplot(.,aes(timeBin, value, color = treat2)) 
+mytheme <- theme(plot.title = element_text(size = 11),
+                 axis.title.y = element_blank(),
+                 strip.background = element_rect(colour = "white", fill = "grey80"), 
+                 legend.title = element_blank(),
+                 legend.justification = c(1,0), legend.position = c(1,0),
+                 legend.background = element_rect(fill=NA, colour = NA),
+                 legend.key = element_rect(fill=NA, colour = NA))
+
+Fig3B <- Fig3B + ggtitle(bquote(list(Recombinant~protein~concentration,paste(mu,mol)/L))) + mytheme
 
 # Fig3A experimental setup/pretreatments ----
-# First, select Dates for Fig3A data
-Dates <- imp %>% 
-  dlply(.(GF)) %>% 
-  lapply(Pairs) %>% 
-  lapply(function(x) if (class(x) == "data.frame") list(x) else x)  %>% 
-  unlist(recursive=FALSE) %>% 
-  lapply({.%>% filter(dosestreatment>0) %>% use_series(Date)  %>% unique})
-
-# Data for angiogenesis article figure panel A ----
-load("data/ecis_pre.R")
-
-# calculate hourly means
-ecispre <- pre %>% # calculate timeBins
-  mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
-  filter(!is.na(timeBin)) %>%
-  filter(Date %in% Dates[[5]]) %>% # use only VEGF 25 data presented in Fig 3B
-  group_by(Date) %>% # adjust timeseries
-  mutate(timeBin=timeBin-max(timeBin)) %>%  
-  filter(timeBin>=-40) %>% 
-  group_by(Freq,Well,Param,Date) %>% # normalise values by dividing with last value
-  mutate(value = value/mean(value%>%tail(n=3)%>%mean)) %>% 
-  #   group_by(Freq,Param,Date) %>% # min-max normalise 
-  #   mutate(value = (value-min(value))/(max(value)-min(value))) %>%
-  group_by(Freq,Param,Date,timeBin) %>% # calculate experiment means
-  summarise(value=mean(value)) %>%
-  group_by(Freq,Param,timeBin) %>% # calculate summary from experiment means
-  summarise(Mean=mean(value),
-            SD=sd(value),
-            N=length(value),
-            SE=SD/sqrt(N))
+Fig3A <- filter(imp.pairs[[5]], timeBin <= 0) %>% Myplot(aes(timeBin,value))
+Fig3A %+% facet_null() + theme(legend.position="none") +
+  ylab(bquote(list(Normalised~.(parameter),.(Parameter)/.(Parameter)[0]~(.(Freq.subset)~Hz)))) +
+  xlab(bquote(list(Time~before~release,h)))
 
 # Figure panel A ----
 Fig3A <- ecispre %>% {
