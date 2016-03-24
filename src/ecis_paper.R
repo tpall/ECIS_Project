@@ -26,7 +26,7 @@ dbDisconnect(db)
 # function to convert factors to numerics
 make.numeric <- . %>% as.character %>% as.numeric
 
-# function to split experiments by different uninduced-induced pairs. Pairs is function importante!!!!
+# function to split experiments by different uninduced-induced pairs.
 Pairs <- . %>% {
   fargs <- use_series(., concGF) %>%
     unique %>%
