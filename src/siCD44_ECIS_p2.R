@@ -1,101 +1,103 @@
-## @knitr siECIS ---
 
+## @knitr load_sirna_ecis
+
+library(plyr);library(dplyr)
 library(RSQLite)
+library(tidyr) # spread
+library(magrittr)
+library(gridExtra);library(grid)
+library(ggplot2)
+library(ggthemes)
 
-Param <- "Z"
-Freq <- 64000
+# Raw impedance data ----
 
-if(!any(ls()%in%"ecis.sirna")) load("data/ecis.sirna.RData")
+# Connect to database
+db <- src_sqlite("data/ECIS2.sqlite", create = FALSE)
 
-if(!Freq==unique(ecis.sirna$Freq)) {
-  
-  db <- dbConnect(SQLite(), dbname="~/Dropbox/ECIS/ECIS_Project/data/ECIS.sqlite") # open connection
-  
-  sqlcmd <- paste('SELECT * FROM Data 
-                INNER JOIN siRNA using(Date,Well) 
-                WHERE Mark = "Release" AND  
-                celldensity = 5000 AND 
-                Param = "',Param,'" AND
-                Freq = "',Freq,'"', sep="")
-  
-  ecis.sirna <- dbGetQuery(db, sqlcmd)
-  
-  dbDisconnect(db)
-  
-  ecis.sirna %<>% 
-    group_by(Date) %>%
-    mutate(Time = Time-Time[1]) %>% 
-    mutate(timeBin = cut(Time, 
-                         breaks = unique(floor(Time)),
-                         labels = FALSE,
-                         include.lowest=TRUE)) %>%
-    (function(x) x[complete.cases(x),]) %>% {
-      finito <- ddply(.,"timeBin", summarise, N = unique(Date) %>% length) %>%
-        filter(N>1) %>% max
-      .[.$timeBin<=finito,]
-    }
-  
-  ecis.sirna %<>% mutate(concGF = as.numeric(as.character(concGF)))
-  ecis.sirna$treatment[ecis.sirna$treatment=="SCR"] <- "siNTP"
-  }
+# Look for table names 
+# src_tbls(db) # list tables in database
 
-# Change factor levels order to make it compatible with CellGlo data
-ecis.sirna$treatment %<>% factor(.,levels=c("siNTP","siCD44","siVIM","UT"))
+# Extract siRNA experiments
+dates <- tbl(db, "Metadata") %>% filter(value=="siCD44") %>% select(Date) %>% distinct() %>% collect() %>% as.data.frame() %>% .[,"Date"]
 
-ylabeller <- function(x){
-  if(x=="C"){out<-paste0("C, Capacitance (F)")}
-  if(x=="Z"){out<-paste0("Z, Impedance (Ohm)")}
-  if(x=="R"){out<-paste0("R, Resistance (Ohm)")}
-  out
-}
+# Get release marks
+sirna.marks <- tbl(db, "Marks") %>% filter(Date %in% dates) %>%
+  collect() %>% rename(Mark = Time) %>% 
+  filter(grepl("GF", Label)) %>% select(Mark,Date)
 
-grid_labeller <- function(var, value){
-  value <- as.character(value)
-  if (var=="concGF") {value <- paste(value,"ng/ml")}
-  return(value)
-}
+# Split metadata column
+wide.metadata <- tbl(db, "Metadata") %>% filter(Date %in% dates) %>% 
+  collect() %>% spread(Metadata, value)
 
+# Download data and merge with metadata
+ecis.sirna <- tbl(db, "Data") %>% filter(Date %in% dates) %>% 
+  collect %>% left_join(., wide.metadata) %>% 
+  left_join(., sirna.marks) %>% rename(Time = `Time (hrs)`) %>% 
+  group_by(Date) %>% mutate(Time = Time-Mark) %>% 
+  mutate(timeBin = cut(Time, 
+                       breaks = unique(floor(Time)),
+                       labels = unique(floor(Time))[-1],
+                       include.lowest=TRUE)) %>%
+  ungroup() %>% filter(complete.cases(.)) %>% 
+  mutate(conc_GF = as.numeric(as.character(conc_GF)),
+         Freq = as.numeric(as.character(Freq)),
+         timeBin = as.numeric(as.character(timeBin)))
 
-Myplot<-function(x) {
-  ggplot(x,aes(timeBin,value,color=treatment)) + 
-    facet_grid(Freq~concGF,scales="free") +
-    stat_summary(fun.y=mean,geom="line",size=1) +
-    stat_summary(fun.data=mean_se,geom="errorbar",size=0.2) +
-    scale_color_colorblind() +
-    ylab(ylabeller(unique(x$Param))) + 
-    xlab("Time after release, h")
-}
+ecis.sirna$treatment[ecis.sirna$treatment=="SCR"] <- "siNTP"
+ecis.sirna$treatment <- factor(ecis.sirna$treatment, levels = c("siNTP", "siCD44", "siVIM", "UT"))
+ecis.sirna$Freq <- factor(ecis.sirna$Freq, levels = unique(ecis.sirna$Freq), labels = paste(unique(ecis.sirna$Freq), "Hz"))
 
-black_monk_theme <- function(){
-  # theme_classic() +
-  theme(plot.title = element_text(size=8),
-        strip.background = element_rect(colour="white", fill="grey80"),
-        legend.position="none")
-}
+## @knitr siECIS 
 
-# Raw VEGF data ----
-gf.si.ecis <- ecis.sirna %>%
-  ungroup %>%
-  filter(GF%in%c("VEGF","bFGF")) %>% 
-  mutate(GF=factor(GF,levels=c("VEGF","bFGF"),labels=c("VEGF","FGF2"))) %>% 
-  Myplot + 
-  facet_grid(GF~concGF, labeller = grid_labeller) +
-  ylab(bquote(list(Impedance~"@"~.(Freq)~Hz,Omega))) +
-  black_monk_theme()
+Parameter <- "Z" 
+Freq.subset <- "64000 Hz"
+if(!any(ls()=="myalpha"))(myalpha <- 0.3)
 
-fbs.si.ecis <- ecis.sirna %>%
-  ungroup %>%
-  filter(GF%in%c("FBS_5","FBS_20")) %>% 
-  mutate(GF=factor(GF,levels=c("FBS_5","FBS_20"),labels=c("5% FBS","20% FBS"))) %>%
-  Myplot + 
-  facet_grid(~GF)+
-  ylab(bquote(list(Impedance~"@"~.(Freq)~Hz,Omega))) +
-  black_monk_theme()
+# Filter 2 independent experiments per condition
+ecis.sirna.filt <- ecis.sirna %>%
+  filter(timeBin >= -2, Param %in% Parameter, Freq %in% Freq.subset) %>% {
+    finito <- ddply(.,"timeBin", summarise, N = unique(Date) %>% length) %>%
+      filter(N>1) %>% max
+    .[.$timeBin<=finito,]} %>% 
+  mutate(GF = factor(GF, levels = c("FBS_5", "FBS_20", "VEGF", "bFGF", "GDF-2" ), 
+                     labels = c("5% FBS","20% FBS", "VEGF", "FGF2", "GDF-2")),
+         conc_GF = factor(conc_GF, levels = unique(ecis.sirna$conc_GF), 
+                          labels = paste(unique(ecis.sirna$conc_GF), "ng/ml")))
 
-gdf.si.ecis <- ecis.sirna %>%
-  ungroup %>%
-  filter(GF%in%c("GDF-2")) %>% 
-  Myplot + 
-  facet_grid(GF~concGF, labeller = grid_labeller) +
-  ylab(bquote(list(Impedance~"@"~.(Freq)~Hz,Omega))) +
-  black_monk_theme()
+# black_monk_theme <- function(){
+#   # theme_classic() +
+#   theme(plot.title = element_text(size = 8),
+#         strip.background = element_rect(colour = "white", fill = "grey80"),
+#         legend.position = "none")
+# }
+
+select_N2_summarise <- function(x) {select(x, Date, GF, conc_GF) %>% 
+  group_by(GF, conc_GF) %>% summarise(N = length(unique(Date))) %>%
+  filter(N>1) %>% select(GF, conc_GF) %>% # filter series with N > 1
+  inner_join(x, .) %>% # use only data with N > 1
+  group_by(Param, Freq, Date, conc_GF, GF, treatment, timeBin) %>%
+  summarise(value = mean(value, na.rm = T)) %>% ungroup}
+
+# siRNA effect on VEGF and FGF2 stimulation ----
+gf.si.ecis <- ecis.sirna.filt %>%
+  filter(GF %in% c("VEGF","FGF2"), treatment != "UT") %>% 
+  select_N2_summarise %>% 
+  ggplot(aes(timeBin, value, color = treatment)) + 
+  stat_summary(fun.data = mean_se, geom = "errorbar", alpha = myalpha) +
+  stat_summary(fun.y = mean, geom = "line") +
+  xlab(bquote(list(Time~relative~to~release,h))) +
+  ylab(bquote(list(Impedance~"@"~.(Freq.subset)~Hz,Omega))) + 
+  facet_wrap( ~ GF + conc_GF) + 
+  theme(legend.position="none") +
+  scale_color_colorblind()
+
+# siRNA effect on FBS stimulation 
+fbs.si <- ecis.sirna.filt %>% filter(GF %in% c("5% FBS","20% FBS"), treatment != "UT") %>% select_N2_summarise
+fbs.si.ecis <- gf.si.ecis %+% fbs.si %+% facet_grid(~ GF)
+
+# siRNA effect on GDF-2 stimulation, 1 experiment only 
+gdf.si <- ecis.sirna.filt %>% filter(GF %in% c("GDF-2"), treatment != "UT") %>%
+  group_by(Param, Freq, Date, conc_GF, GF, treatment, timeBin) %>%
+  summarise(value = mean(value, na.rm = T))
+gdf.si.ecis <- gf.si.ecis %+% gdf.si
+

@@ -14,6 +14,7 @@ library(ggthemes)
 # Specify parameters presented
 Parameter <- "Z"
 Freq.subset <- "16000"
+if(!any(ls()=="myalpha"))(myalpha <- 0.3)
 
 # Connect to database
 db <- src_sqlite("data/ECIS2.sqlite", create = FALSE)
@@ -29,12 +30,14 @@ marks <- tbl(db, "Marks") %>% filter(Date %in% dates[-1]) %>%
   summarise(Mark = max(Mark))
 
 # Mean preincubation time 
-Preinc <- tbl(db, "Marks") %>% filter(Date %in% dates[-1]) %>%
+ecis.preinc <- tbl(db, "Marks") %>% filter(Date %in% dates[-1]) %>%
   collect() %>% rename(Mark = Time) %>% group_by(Date) %>%
   summarise(Preinc = Mark[3]-Mark[2],
             Starv = Mark[3]-Mark[1]) %>% 
-  ungroup %>% summarise(Preinc = mean(Preinc),
-                        Starv = mean(Starv)) %>% melt
+  ungroup %>% summarise(Preinc.mean = mean(Preinc),
+                        Preinc.se = sd(Preinc)/sqrt(length(Preinc)),
+                        Starv.mean = mean(Starv),
+                        Starv.se = sd(Starv)/sqrt(length(Starv))) %>% melt
 
 # Split metadata column
 wide.metadata <- tbl(db, "Metadata") %>% filter(Date %in% dates[-1]) %>% 
@@ -76,7 +79,7 @@ imp.pairs <- imp %>%
   group_by(Date, conc_GF, doses_treatment, GF, treatment, timeBin) %>% # summarise each experiment
   summarise(value = mean(value, na.rm = T)) %>%
   ungroup %>%
-  mutate(treatment = ifelse(doses_treatment > 0, as.character(treatment), "untreated"),
+  mutate(treatment = ifelse(doses_treatment > 0, treatment, "untreated"),
          doses_treatment = round(doses_treatment/1000, digits = 2),
          treat2 = paste0(conc_GF," ng/ml ", GF, "\n+", treatment), # create summary variable treat2
          treat2 = gsub("SB101", "3MUT", treat2),
@@ -88,7 +91,9 @@ imp.pairs <- imp %>%
     use_series(Date) %>% unique
   filter(., Date %in% datestouse)}})
 
-Myplot <- function(x, myaes) {
+imp.pairs[[5]]$Date%>%unique
+
+Myplot <- function(x, myaes, Parameter) {
   parameter <- switch(Parameter, Z = "impedance",
                       R = "resistance",
                       C = "capacitance")
@@ -98,10 +103,11 @@ Myplot <- function(x, myaes) {
     stat_summary(fun.y = mean, geom = "line") +
     scale_color_manual(values = colorblind_pal()(8)) + # c("#E69F00","#009E73","#D55E00","#000000")
     guides(color = guide_legend(ncol = 4)) +
-    xlab(bquote(list(Time~after~release,h)))}
+    xlab(bquote(list(Time~after~release,h))) +
+    ylab(bquote(list(Normalised~.(parameter),.(Parameter)/.(Parameter)[0]~(.(Freq.subset)~Hz))))}
 
 # lets select only VEGF 25 data for plotting
-Fig3B <- imp.pairs[[5]] %>% filter(timeBin >= 0) %>% Myplot(.,aes(timeBin, value, color = treat2)) 
+p3b <- imp.pairs[[5]] %>% filter(timeBin >= 0) %>% Myplot(.,aes(timeBin, value, color = treat2), Parameter) 
 mytheme <- theme(plot.title = element_text(size = 11),
                  axis.title.y = element_blank(),
                  strip.background = element_rect(colour = "white", fill = "grey80"), 
@@ -110,29 +116,21 @@ mytheme <- theme(plot.title = element_text(size = 11),
                  legend.background = element_rect(fill=NA, colour = NA),
                  legend.key = element_rect(fill=NA, colour = NA))
 
-Fig3B <- Fig3B + ggtitle(bquote(list(Recombinant~protein~concentration,paste(mu,mol)/L))) + mytheme
+Fig3B <- p3b + ggtitle(bquote(list(Recombinant~protein~concentration,paste(mu,mol)/L))) + mytheme
 
 # Fig3A experimental setup/pretreatments ----
-Fig3A <- filter(imp.pairs[[5]], timeBin <= 0) %>% Myplot(aes(timeBin,value))
-Fig3A %+% facet_null() + theme(legend.position="none") +
-  ylab(bquote(list(Normalised~.(parameter),.(Parameter)/.(Parameter)[0]~(.(Freq.subset)~Hz)))) +
-  xlab(bquote(list(Time~before~release,h)))
+p3a <- filter(imp.pairs[[5]], timeBin <= 0) %>% 
+  group_by(Date, timeBin) %>% # summarise each experiment
+  summarise(value = mean(value, na.rm = T)) %>%
+  Myplot(aes(timeBin,value), Parameter)
 
-# Figure panel A ----
-Fig3A <- ecispre %>% {
-  Fq <- use_series(.,"Freq") %>% as.character %>% as.numeric
-  Par <- use_series(.,"Param") %>% unique %>% as.character
-  parameter <- switch(Par,Z="impedance",
-                      R="resistance",
-                      C="capacitance")
-  y.pos <- filter(.,timeBin==-17) %>% ungroup %>% dplyr::select(Mean,SD)
-  p <- ggplot(.,aes(x=timeBin,y=Mean)) + 
-    geom_line(size=1) +
-    geom_errorbar(aes(ymin=Mean-SD,ymax=Mean+SD),size=0.2,alpha=0.75) +
-    geom_vline(xintercept = c(-17.5,-1), linetype = "longdash") +
-    ylab(bquote(atop(Normalised~.(parameter), 
-                     .(Par)/.(Par)[0]~(.(Fq)~Hz)))) +
-    xlab("Time before release, h") +
-    annotate("text",x=c(-33,-9),y=y.pos$Mean*1.2,label=c("20%\nFBS","1%\nFBS"), size=3) +
-    annotate("text",x=1.3,y=y.pos$Mean*0.9,label="1~h~preincubation%->%release",parse = TRUE,angle=90, size=3)
-  p}
+Fig3A <- p3a %+% facet_null() + xlab(bquote(list(Time~before~release,h))) +
+  geom_vline(xintercept = -sum(ecis.preinc$value[1:2]), linetype = "longdash") +
+  annotate("text", x = c(-35,-mean(c(sum(ecis.preinc$value[1:2]),
+                                     sum(ecis.preinc$value[3:4])))),
+           y = 1.625, label = c("20%\nFBS", "1%\nFBS")) +
+  annotate("text", x = 1.3, y = 1.38, 
+           label = "1~h~preincubation%->%release", parse = TRUE, angle = 90) +
+  annotate("rect", xmin = -sum(ecis.preinc$value[1:2]), xmax = -sum(ecis.preinc$value[3:4]), 
+           ymin = -Inf, ymax = Inf, alpha = myalpha)
+

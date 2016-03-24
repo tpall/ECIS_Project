@@ -67,50 +67,77 @@ rb.sum <- rba.pairs %>%
 
 
 # Plotting compartment ----
+
 library(ggplot2)
 library(ggthemes)
 library(Hmisc)
+
 # load Myplot2 function
 source("lib//Myplot2.R")
 
 rb.sum[[2]] %>% Myplot2
-rba.pairs %>% lapply({.%>%droplevels%>%summary})
+
+# rba.pairs %>% lapply({.%>%droplevels%>%summary})
 
 rb.sum %>% lapply(summary)
 rb.sum %>% lapply(.%>%select(dosestreatment)%>%unique)
 
 library(gridExtra)
+
 rb.sum %>% 
   lapply({.%>%qplot(RMSE,data=., geom="histogram", fill=treatment)}) %>%
   do.call(grid.arrange,.)
+
 rb.sum %>% 
   lapply({.%>%qplot(Drift,data=., geom="histogram", fill=treatment)}) %>%
   do.call(grid.arrange,.)  
 
 rb.sum %>% names
   
-Rb.plot <- .%>% {
-  filter(.,!Date=="20131213") %>%
-  filter(Time<=72) %>%
-  group_by(Well,Date) %>%
-  mutate(timeBin=Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
+Rb.plot <- . %>% {
+  filter(.,Date!="20131213", Time <= 72) %>%
+  # group_by(Well, Date) %>%
+  mutate(timeBin = Time%>%cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
   filter(!is.na(timeBin)) %>% 
-  group_by(Param,Date,dosestreatment,treatment,timeBin,GF,concGF) %>% 
+  group_by(Param, Date, dosestreatment, treatment, timeBin, GF, concGF) %>% 
   summarise(value=mean(value)) %>% 
   ungroup %>%
   mutate(treatment=ifelse(dosestreatment>0,as.character(treatment),"untreated")) %>%
-  inset(,"treat2",paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
-  mutate(treat2=gsub("SB101","3MUT",treat2)) %>%
-  ggplot(.,aes(x=timeBin,y=value,color=treat2)) + 
-  stat_summary(fun.data=mean_se,geom="errorbar",width=0.25,alpha=0.25) +
-  stat_summary(fun.y=mean,geom="line") +
-  facet_grid(Param~dosestreatment,scales = "free_y") +
-  scale_color_colorblind() +
+  inset(,"treat2", paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
+  mutate(treat2 = gsub("SB101", "3MUT", treat2)) %>%
+  ggplot(aes(x = timeBin, y = value, color = treat2)) + 
+  stat_summary(fun.data = mean_se, geom = "errorbar", width=0.25, alpha=0.25) +
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_grid(Param ~ dosestreatment, scales = "free_y") +
   ggtitle(bquote(list(Treatment~conc.,ng/ml))) +
   ylab(bquote(Parameter~value)) +
-  xlab(bquote(list(Time,hours))) +
-  theme(legend.title=element_blank())}
+  xlab(bquote(list(Time,hours)))}
+
+# theme(legend.title=element_blank())
+# scale_color_colorblind() +
 
 rb.sum[-1] %>% 
   lapply(Rb.plot) %>%
   do.call(grid.arrange,.)
+
+rb.sum[[5]] %>% Rb.plot + scale_color_colorblind()
+
+rb <- rb.sum[-1] %>% lapply(.%<>%filter(Param=="Rb")) %>% ldply
+rb <- rb %>% filter(.,Date != "20131213", Time <= 72) %>%
+  mutate(timeBin = Time %>% cut(., floor(.)%>%unique, labels = FALSE, include.lowest = TRUE)) %>%
+  filter(!is.na(timeBin)) %>% 
+  group_by(.id, Param, Date, dosestreatment, treatment, timeBin, GF, concGF) %>% 
+  summarise(value=mean(value)) %>% 
+  ungroup %>%
+  mutate(treatment = ifelse(dosestreatment > 0, as.character(treatment), "untreated")) %>%
+  inset(,"treat2", paste0(.$concGF," ng/ml ",.$GF,"\n+",.$treatment)) %>% 
+  mutate(treat2 = gsub("SB101", "3MUT", treat2))
+
+rb %>% ggplot(aes(x = timeBin, y = value, color = treatment)) + 
+    stat_summary(fun.data = mean_se, geom = "errorbar", width=0.25, alpha=0.25) +
+    stat_summary(fun.y = mean, geom = "line") +
+    facet_grid(.id ~ dosestreatment, scales = "free_y") +
+    ggtitle(bquote(list(Treatment~conc.,ng/ml))) + # uninduced!!!
+    ylab(bquote(Parameter~value)) +
+    xlab(bquote(list(Time,hours)))
+  

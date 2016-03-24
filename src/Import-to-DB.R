@@ -7,6 +7,7 @@
 # Load required packages and set the working directory
 library(sqldf)      # Loads RSQLite
 library(XLConnect)  # To read Excel sheets and workbooks
+library(gdata) # To read Excel sheets and workbooks
 library(magrittr)
 library(data.table)
 library(reshape2)
@@ -15,17 +16,18 @@ library(plyr)
 library(dplyr)
 source("lib/LoadData.R")
 
-db <- dbConnect(SQLite(), dbname="data/ECIS.sqlite")
+db <- dbConnect(SQLite(), dbname="data/ECIS2.sqlite")
 
 xlsfiles <- file.path("rawdata", list.files(path = "rawdata", pattern = "_[1,2]{1}.xls"))
 # if("Data"%in%dbListTables(db)){dbRemoveTable(db, "Data")}
-fillDBwithData <- function(xls,conn){
-  loadData(xls) %>%
-  dbWriteTable(conn = db, name = "Data", 
-               value = ., row.names = FALSE, append=TRUE) 
+
+
+
+fillDBwithData <- function(xls, conn, name, append = TRUE){
+  loadData(xls) %>% dbWriteTable(conn = conn, name = name, value = ., row.names = FALSE, append = append)
 }
 
-xlsfiles %>% sapply(.,function(x) fillDBwithData(x, db))
+xlsfiles %>% sapply(., function(x) fillDBwithData(x, db, "Data", append = TRUE))
 
 # if(dbExistsTable(db, "Metadata")){dbRemoveTable(db, "Metadata")}
 # Create Metadata table
@@ -35,7 +37,7 @@ xlsfiles %>% sapply(.,function(x) fillDBwithData(x, db))
 Metadata <- xlsfiles %>% 
   classifyMetaData %>% 
   dlply(., "Type", loadMetaData2) %>% 
-  set_names(c("Model","Treatments","siRNA"))
+  set_names(c("Model", "Treatments", "siRNA"))
 
 Metadata %>% use_series(Model) %>% dbWriteTable(conn = db, name = "Model", value = ., row.names = FALSE)
 Metadata %>% use_series(Treatment) %>% dbWriteTable(conn = db, name = "Treatment", value = ., row.names = FALSE)
@@ -51,15 +53,15 @@ Metadata %>% use_series(siRNA) %>% dbWriteTable(conn = db, name = "siRNA", value
 
 
 # Create and insert data to RbA table ----
-RbAfiles <- file.path("rawdata", list.files(path = "rawdata", pattern = "_RbA.csv"))
+RbAfiles <- file.path("rawdata", list.files(path = "rawdata", pattern = "_RbA.csv", recursive = F))
 
-fillRBdata <- function(csv,conn){
+fillRBdata <- function(csv, conn){
   loadRbAData(csv) %>%
     dbWriteTable(conn = db, name = "Rbmodel", 
-                 value = ., row.names = FALSE, append=TRUE) 
+                 value = ., row.names = FALSE, overwrite = TRUE, append = F)
 }
 
-RbAfiles %>% sapply(.,function(x) fillRBdata(x,db))
+RbAfiles %>% sapply(., function(x) fillRBdata(x, db))
 
 # dbListTables(db) 
 # dbListFields(db, "Data") 
@@ -79,3 +81,4 @@ RbAfiles %>% sapply(.,function(x) fillRBdata(x,db))
 # summary(data)
 # rm(data)
 dbDisconnect(db)            # Close connection
+

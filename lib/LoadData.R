@@ -1,6 +1,9 @@
 
 # Load rawdata from xls file ----
 loadData <- function(...) {
+  
+  library(XLConnect)
+  
   wb <- c(...) %>% loadWorkbook
   Date <- readWorksheet(wb, sheet=1)[8,2] %>% gsub("[ -]","",.)
   
@@ -33,7 +36,7 @@ Mark <- wb %>%
 
 if(length(Mark)==2){
   labels <- c("Seed", "Starv", "Release")
-}else{labels <- c("Seed", "Starv", "Preinc", "Release")}
+} else {labels <- c("Seed", "Starv", "Preinc", "Release")}
 
 All$Mark <- All %>% 
   use_series(Time) %>% {
